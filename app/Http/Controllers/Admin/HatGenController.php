@@ -28,6 +28,13 @@ class HatGenController extends Controller
         // Get QR customization settings from form
         $fgColor = $r->input('fg_color', '#000000');
         $bgColor = $r->input('bg_color', '#FFFFFF');
+        $modulePattern = $r->input('module_pattern', 'margin');
+        $websiteUrl = $r->input('website_url', null);
+        
+        // Validate URL if provided
+        if ($websiteUrl && !filter_var($websiteUrl, FILTER_VALIDATE_URL)) {
+            return back()->withErrors(['website_url' => 'Please enter a valid URL (e.g., https://example.com)']);
+        }
         
         // Handle logo upload if provided
         $logoPath = null;
@@ -52,10 +59,15 @@ class HatGenController extends Controller
                 'qr_fg_color' => $fgColor,
                 'qr_bg_color' => $bgColor,
                 'qr_logo_path' => $logoPath, // Already includes /storage/ prefix
+                'qr_module_pattern' => $modulePattern, // Module pattern/style
+                'website_url' => $websiteUrl, // Website URL for QR code redirect
             ]);
         }
         
         $message = "Minted $count hats for {$city}.";
+        if ($websiteUrl) {
+            $message .= " QR codes will redirect to: {$websiteUrl}.";
+        }
         if ($logoPath) {
             $message .= " QR codes will include the uploaded logo by default.";
         }
@@ -70,8 +82,8 @@ class HatGenController extends Controller
     {
         $hat = Hat::where('slug', $slug)->firstOrFail();
         
-        // Link to the hat's hub (location URL)
-        $url = url("/h/{$slug}");
+        // Use website URL if set, otherwise link to the hat's hub
+        $url = $hat->website_url ?: url("/h/{$slug}");
         
         // Configuration from request parameters (override saved values)
         // Also accept alternate keys without underscores in case links omit encoding of '#'
@@ -94,8 +106,9 @@ class HatGenController extends Controller
         $qrSize = (int) $r->input('size', 1500); // Larger size for hat scanning - modules more spread out
         
         // Parse colors (required by QR code library)
-        $foregroundColor = $this->parseColor($fgColor);
-        $backgroundColor = $this->parseColor($bgColor);
+        // Use the actual foreground and background colors from the request
+        $foregroundColor = $this->parseColor($fgColor); // Foreground color for modules
+        $backgroundColor = $this->parseColor($bgColor); // Background color
         
         // Determine error correction level
         // For minimal modules, use Low error correction when no logo
@@ -148,12 +161,14 @@ class HatGenController extends Controller
                 
                 // Add circular border around logo and create padded version
                 // The border ensures no modules can get inside the circle
-                $logoWithBorder = $this->addCircularBorderToLogo($logoFullPath, $logoWidth);
+                // Pass foreground and background colors so corners match foreground and circle matches background
+                $logoWithBorder = $this->addCircularBorderToLogo($logoFullPath, $logoWidth, $foregroundColor, $backgroundColor);
                 $logoFullPath = $logoWithBorder;
                 
-                // Make punchout area SIGNIFICANTLY larger to ensure NO modules touch the logo
-                // Increase punchout area by 30% to create a larger clear zone - ensures modules stay OUTSIDE circle
-                $punchoutSize = (int) round($logoWidth * 1.30); // 30% larger to ensure complete clearance, no modules inside
+                // Make punchout area SIGNIFICANTLY larger to ensure NO white circular modules touch the circle
+                // Increase punchout area by 40% to create a larger clear zone - ensures modules stay OUTSIDE circle
+                // This prevents any white circular modules from touching or appearing inside the black circle border
+                $punchoutSize = (int) round($logoWidth * 1.40); // 40% larger to ensure complete clearance, no modules inside
                 $logoWidth = $punchoutSize;
                 
                 // Force High error correction when logo is present to ensure scannability
@@ -167,6 +182,18 @@ class HatGenController extends Controller
             }
         }
         
+        // Determine module pattern/style
+        // Options: 'none' (square), 'margin' (rounded/circular), 'enlarge' (larger rounded), 'shrink' (smaller rounded)
+        // Use saved pattern from hat, allow override via query parameter
+        $modulePattern = $r->input('module_pattern', $hat->qr_module_pattern ?? 'margin');
+        $roundBlockSizeMode = match(strtolower($modulePattern)) {
+            'none' => RoundBlockSizeMode::None,      // Square modules (standard QR code)
+            'enlarge' => RoundBlockSizeMode::Enlarge, // Larger rounded modules
+            'shrink' => RoundBlockSizeMode::Shrink,   // Smaller rounded modules
+            'margin' => RoundBlockSizeMode::Margin,    // Rounded/circular modules (default)
+            default => RoundBlockSizeMode::Margin
+        };
+        
         // Create Builder with v6 API (constructor-based)
         $builder = new Builder(
             writer: $writer,
@@ -175,12 +202,12 @@ class HatGenController extends Controller
             errorCorrectionLevel: $errorLevel,
             size: $qrSize,
             margin: 4,
-            roundBlockSizeMode: RoundBlockSizeMode::Margin,
+            roundBlockSizeMode: $roundBlockSizeMode, // Module pattern/style
             foregroundColor: $foregroundColor,
             backgroundColor: $backgroundColor,
             logoPath: $logoFullPath ?? '',
             logoResizeToWidth: $logoWidth,
-            logoPunchoutBackground: $logoPunchout
+            logoPunchoutBackground: $logoPunchout // Removes modules inside circle
         );
         
         // Build the QR code
@@ -317,14 +344,16 @@ class HatGenController extends Controller
     /**
      * Add a circular border around the logo to create a clear zone
      * This ensures no QR code modules can appear inside the circle
+     * Corners outside the circle will match the foreground color
+     * Circle behind logo will match the background color
      */
-    private function addCircularBorderToLogo(string $logoPath, int $targetWidth): string
+    private function addCircularBorderToLogo(string $logoPath, int $targetWidth, Color $foregroundColor, Color $backgroundColor): string
     {
         if (!function_exists('imagecreatefrompng')) {
             return $logoPath; // GD not available, return original
         }
         
-        // Create a temporary path for the logo with border
+        // Create a temporary path for the logo with white background
         $borderLogoPath = str_replace('.png', '_bordered.png', $logoPath);
         
         // Load the circular logo
@@ -334,74 +363,48 @@ class HatGenController extends Controller
         }
         
         $logoSize = imagesx($logo); // Should be square after circular processing
-        // Increase border width to create a larger clear zone - 12% of target width, minimum 12px
-        $borderWidth = max(12, (int) round($targetWidth * 0.12));
         
-        // Create new image with border padding
-        $newSize = $logoSize + ($borderWidth * 2);
+        // Use the logo size as the base, but ensure it matches targetWidth for punchout
+        // The white circle should fit the logo perfectly without cutting it off
+        $newSize = max($logoSize, $targetWidth); // Use larger of the two to ensure logo fits
+        
         $bordered = imagecreatetruecolor($newSize, $newSize);
-        imagealphablending($bordered, false);
-        imagesavealpha($bordered, true);
         
-        // Fill with transparent background
-        $transparent = imagecolorallocatealpha($bordered, 0, 0, 0, 127);
-        imagefill($bordered, 0, 0, $transparent);
+        // Fill entire image with foreground color first (corners will match foreground)
+        // Get RGB values from foreground color
+        $fgR = $foregroundColor->getRed();
+        $fgG = $foregroundColor->getGreen();
+        $fgB = $foregroundColor->getBlue();
         
-        // Draw a black circle outline/border - inside remains transparent
-        // This creates a clear zone where NO modules can appear, with a visible black border
+        $foregroundColorGD = imagecolorallocate($bordered, $fgR, $fgG, $fgB);
+        imagefill($bordered, 0, 0, $foregroundColorGD); // Fill entire square with foreground color
+        
+        // Draw a circular background matching the QR background color - circle fits the logo size perfectly
+        // Use logoSize as the circle diameter to ensure logo fits without cutting
         $centerX = $newSize / 2;
         $centerY = $newSize / 2;
-        $outerRadius = $newSize / 2;
-        $innerRadius = $outerRadius - $borderWidth;
+        $radius = $logoSize / 2; // Use logo size for radius so it fits perfectly
         
-        // Draw black border ring (outline only, not filled)
-        $blackBorder = imagecolorallocate($bordered, 0, 0, 0); // Black border
-        $borderThickness = max(2, (int)($borderWidth * 0.5)); // Border thickness
+        // Fill the circle with background color (matches QR code background)
+        $bgR = $backgroundColor->getRed();
+        $bgG = $backgroundColor->getGreen();
+        $bgB = $backgroundColor->getBlue();
+        $circleBackground = imagecolorallocate($bordered, $bgR, $bgG, $bgB);
+        imagealphablending($bordered, false); // Disable blending for solid fill
+        imagefilledellipse($bordered, $centerX, $centerY, $radius * 2, $radius * 2, $circleBackground);
         
-        // Draw the black circle outline by drawing pixels in a ring pattern
-        for ($angle = 0; $angle < 360; $angle += 0.2) {
-            $rad = deg2rad($angle);
-            // Draw outer edge of border
-            for ($r = $outerRadius - $borderThickness; $r <= $outerRadius; $r += 0.2) {
-                $x = $centerX + ($r * cos($rad));
-                $y = $centerY + ($r * sin($rad));
-                if ($x >= 0 && $x < $newSize && $y >= 0 && $y < $newSize) {
-                    imagesetpixel($bordered, (int)$x, (int)$y, $blackBorder);
-                }
-            }
-            // Draw inner edge of border
-            for ($r = $innerRadius; $r <= $innerRadius + $borderThickness; $r += 0.2) {
-                $x = $centerX + ($r * cos($rad));
-                $y = $centerY + ($r * sin($rad));
-                if ($x >= 0 && $x < $newSize && $y >= 0 && $y < $newSize) {
-                    imagesetpixel($bordered, (int)$x, (int)$y, $blackBorder);
-                }
-            }
-        }
-        
-        // Fill the border ring area with black to create a solid border
-        // The inside of the circle remains transparent (no white fill)
-        for ($r = $innerRadius; $r <= $outerRadius; $r += 0.5) {
-            for ($angle = 0; $angle < 360; $angle += 0.5) {
-                $rad = deg2rad($angle);
-                $x = $centerX + ($r * cos($rad));
-                $y = $centerY + ($r * sin($rad));
-                if ($x >= 0 && $x < $newSize && $y >= 0 && $y < $newSize) {
-                    imagesetpixel($bordered, (int)$x, (int)$y, $blackBorder);
-                }
-            }
-        }
-        
-        // Copy the circular logo to the center (on transparent background)
+        // Center the logo on the circular background
         $logoX = ($newSize - $logoSize) / 2;
         $logoY = ($newSize - $logoSize) / 2;
         
-        imagealphablending($bordered, true);
+        // Copy logo on top of circular background
+        imagealphablending($bordered, true); // Enable blending for logo overlay
         imagecopy($bordered, $logo, $logoX, $logoY, 0, 0, $logoSize, $logoSize);
         
-        // Save the bordered logo
+        // Save the logo with circular background matching QR background color
+        // Corners are filled with foreground color (no transparency needed)
         imagealphablending($bordered, false);
-        imagesavealpha($bordered, true);
+        imagesavealpha($bordered, false); // No alpha - solid colors
         imagepng($bordered, $borderLogoPath, 9);
         
         // Clean up

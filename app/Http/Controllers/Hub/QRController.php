@@ -22,6 +22,11 @@ class QRController extends Controller
             'user_agent' => $req->userAgent(),
         ]);
 
+        // If hat has a website URL, redirect to it instead of showing the hub page
+        if ($hat->website_url) {
+            return redirect($hat->website_url);
+        }
+
         // very simple "Link Hub"
         // If owner exists -> show hub; otherwise show claim CTA + sign-in prompt
         return view('hub.show', ['hat' => $hat]);

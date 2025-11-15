@@ -11,7 +11,7 @@ class Hat extends Model
 {
     use HasUuids;
 
-    protected $fillable = ['slug', 'city', 'serial', 'user_id', 'first_scan_at', 'qr_fg_color', 'qr_bg_color', 'qr_logo_path'];
+    protected $fillable = ['slug', 'city', 'serial', 'user_id', 'first_scan_at', 'qr_fg_color', 'qr_bg_color', 'qr_logo_path', 'qr_module_pattern', 'website_url'];
 
     public function claimEvents(): HasMany
     {

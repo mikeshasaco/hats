@@ -90,6 +90,38 @@
                             </div>
                             <p class="text-xs text-gray-500 mt-2">QR codes will link to this city's app page</p>
                         </div>
+                        
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-semibold text-gray-700 mb-3">Website URL (Optional)</label>
+                            <div class="relative">
+                                <input name="website_url" type="url" placeholder="https://example.com" 
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm">
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-3">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                                    </svg>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">If provided, QR codes will redirect to this URL instead of the city page</p>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-3">Module Pattern</label>
+                            <div class="relative">
+                                <select name="module_pattern" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm appearance-none bg-white">
+                                    <option value="margin">🔵 Rounded/Circular (Default)</option>
+                                    <option value="none">⬜ Square (Standard)</option>
+                                    <option value="enlarge">🔴 Larger Rounded</option>
+                                    <option value="shrink">🔵 Smaller Rounded</option>
+                                </select>
+                                <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                    <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Choose the style/shape of QR code modules</p>
+                        </div>
                     </div>
                     
                     <!-- QR Code Customization Section -->
